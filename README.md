@@ -11,5 +11,6 @@ and sisyphus, for arches amd64 and arm64, and push them to the
     --organization obirvalger \
     --name archive \
     --branch p10 sisyphus \
-    --arch amd64 arm64
+    --arch amd64 arm64 \
+    --packages apt-repo
 ```

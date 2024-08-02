@@ -111,8 +111,12 @@ def remove_container(name):
     )
 
 
-def buildah_build(arch, branch, date, manifest, image):
+def buildah_build(arch, branch, date, manifest, image, packages):
     container = f"{INTERNAL_CONTAINER}-{arch}"
+
+    def run_command_in_container(*cmd, **kwargs):
+        subprocess.run(["buildah", "run", container] + list(cmd), **kwargs)
+
     remove_image(image)
     remove_container(container)
     subprocess.run(
@@ -136,27 +140,34 @@ def buildah_build(arch, branch, date, manifest, image):
         ],
         cwd=CWD / arch,
     )
-    subprocess.run(
-        [
-            "buildah",
-            "run",
-            container,
-            "sh",
-            "-c",
-            "true > /etc/security/limits.d/50-defaults.conf",
-        ],
+
+    run_command_in_container(
+        "sh",
+        "-c",
+        "true > /etc/security/limits.d/50-defaults.conf",
     )
-    subprocess.run(
-        [
-            "buildah",
-            "run",
-            container,
-            "sh",
-            "-c",
-            "cat > /etc/apt/sources.list.d/alt.list",
-        ],
+    run_command_in_container(
+        "sh",
+        "-c",
+        "cat > /etc/apt/sources.list.d/alt.list",
         input=generate_source_list(arch, branch, date).encode(),
     )
+
+    if packages:
+        run_command_in_container(
+            "apt-get",
+            "update",
+        )
+        run_command_in_container("apt-get", "install", "-y", *packages)
+        run_command_in_container(
+            "sh",
+            "-c",
+            "rm -f"
+            " /var/cache/apt/archives/*.rpm"
+            " /var/cache/apt/*.bin"
+            " /var/lib/apt/lists/*.*",
+        )
+
     subprocess.run(
         [
             "buildah",
@@ -207,7 +218,15 @@ def podman_push(image):
 
 
 def build_all(
-    arches, branches, dates, mkimage_profiles_dir, registry, organization, name, stages
+    arches,
+    branches,
+    dates,
+    mkimage_profiles_dir,
+    registry,
+    organization,
+    name,
+    stages,
+    packages,
 ):
     repo = f"{registry}/{organization}"
     for branch in branches:
@@ -220,7 +239,7 @@ def build_all(
                 if "build_tarball" in stages:
                     build_tarball(arch, branch, date, mkimage_profiles_dir)
                 if "build_image" in stages:
-                    buildah_build(arch, branch, date, manifest, image)
+                    buildah_build(arch, branch, date, manifest, image, packages)
                 if "test" in stages:
                     test(arch, branch, date, image)
             if "push" in stages:
@@ -317,6 +336,11 @@ def parse_args():
         choices=stages,
         help="list of skipping stages",
     )
+    parser.add_argument(
+        "--packages",
+        nargs="+",
+        help="list of packages to install",
+    )
     args = parser.parse_args()
 
     args.arches = set(args.arches) - set(args.skip_arches)
@@ -338,6 +362,7 @@ def main():
         args.organization,
         args.name,
         stages,
+        args.packages,
     )
 
     if "clean" in stages:
